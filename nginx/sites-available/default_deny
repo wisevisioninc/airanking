@@ -1,0 +1,19 @@
+# Default server configuration to catch all undefined hostnames
+# This prevents requests without a proper Host header from accessing any site
+
+server {
+    # High priority default server that will drop requests with undefined hostnames
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    
+    # This server has no hostname (_) and will match any hostname not matched by other server blocks
+    server_name _;
+    
+    # Return 444 (connection closed without response) for all requests
+    # This is more secure than returning 403 or redirect
+    return 444;
+    
+    # Log requests to undefined hosts for monitoring
+    access_log /var/log/nginx/default_deny.access.log;
+    error_log /var/log/nginx/default_deny.error.log;
+} 

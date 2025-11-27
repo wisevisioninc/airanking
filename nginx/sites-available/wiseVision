@@ -1,0 +1,105 @@
+upstream gitlab{
+    server localhost:10080;
+    keepalive 64;
+}
+
+server {
+    listen 80;
+    server_name _;
+    rewrite ^(.*)$ https://$host$1; #将所有HTTP请求通过rewrite指令重定向到HTTPS
+}
+
+server {
+    listen 443 ssl http2;
+    server_name gitlab.wisevision.cn;
+
+    ssl_certificate certs/gitlab.wisevision.cn.pem;
+    ssl_certificate_key certs/gitlab.wisevision.cn.key;
+    ssl_session_timeout 5m;
+    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE:ECDH:AES:HIGH:!NULL:!aNULL:!MD5:!ADH:!RC4;
+    ssl_protocols TLSv1.1 TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    location / {
+	    proxy_pass http://gitlab;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name *.wisevision.com wisevision.com;
+
+    ssl_certificate certs/wisevision.com.pem;
+    ssl_certificate_key certs/wisevision.com.key;
+    ssl_session_timeout 5m;
+    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE:ECDH:AES:HIGH:!NULL:!aNULL:!MD5:!ADH:!RC4;
+    ssl_protocols TLSv1.1 TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    location / {
+        root /home/jack/wiseVision;
+        index index.html index.htm;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name *.wisevision.cn wisevision.cn;
+
+    ssl_certificate certs/wisevision.cn.pem;
+    ssl_certificate_key certs/wisevision.cn.key;
+    ssl_session_timeout 5m;
+    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE:ECDH:AES:HIGH:!NULL:!aNULL:!MD5:!ADH:!RC4;
+    ssl_protocols TLSv1.1 TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    location / {
+        root /home/jack/wiseVision;
+        index index.html index.htm;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name *.wise-sense.com wise-sense.com;
+
+    ssl_certificate certs/wise-sense.com.pem;
+    ssl_certificate_key certs/wise-sense.com.key;
+    ssl_session_timeout 5m;
+    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE:ECDH:AES:HIGH:!NULL:!aNULL:!MD5:!ADH:!RC4;
+    ssl_protocols TLSv1.1 TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    location / {
+        root /home/jack/wiseVision;
+        index index.html index.htm;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name *.wisedoc.com wisedoc.com;
+
+    ssl_certificate certs/wisedoc.com.pem;
+    ssl_certificate_key certs/wisedoc.com.key;
+    ssl_session_timeout 5m;
+    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE:ECDH:AES:HIGH:!NULL:!aNULL:!MD5:!ADH:!RC4;
+    ssl_protocols TLSv1.1 TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    location / {
+        root /home/jack/wiseVision;
+        index index.html index.htm;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name _;
+
+    location / {
+        root /home/jack/wiseVision;
+        index index.html index.htm;
+    }
+}
+
