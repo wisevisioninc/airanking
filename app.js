@@ -323,18 +323,28 @@ function validateGameData() {
         
         if (isAttending) {
             const winLoseToggle = card.querySelector(".win-lose-toggle");
-            const winOrLose = winLoseToggle.textContent; // "Win" or "Lose"
+            const winOrLose = winLoseToggle.textContent; // "Win" or "Lose"  or "Peace"
             const chipsValue = parseInt(card.querySelector(".chip-input").value) || 0;
             
-            // Ensure win/lose matches chips value
-            if ((winOrLose === "Win" && chipsValue <= 0) || (winOrLose === "Lose" && chipsValue >= 0)) {
+            // Ensure win/lose matches chips value (allow 0 for Peace)
+            if (chipsValue > 0 && winOrLose !== "Win") {
+                showValidationError(`${playerName}'s chips value does not match win/lose status.`);
+                return;
+            }
+            if (chipsValue < 0 && winOrLose !== "Lose") {
                 showValidationError(`${playerName}'s chips value does not match win/lose status.`);
                 return;
             }
             
+            // For chips = 0, set status to Peace
+            let finalWinOrLose = winOrLose;
+            if (chipsValue === 0) {
+                finalWinOrLose = "Peace";
+            }
+            
             attendingPlayers.push({
                 playerName,
-                winOrLose,
+                winOrLose: finalWinOrLose,
                 chips: chipsValue,
                 finalChips: 0 // Will be calculated later
             });
@@ -351,7 +361,7 @@ function validateGameData() {
     
     // Sum of chips should be zero (winners win what losers lose)
     if (chipsSum !== 0) {
-        showValidationError(`Sum of chips must be zero. Current sum: ${chipsSum}`);
+        showValidationError(`chips 总和需为0. 当前总和: ${chipsSum}`);
         return;
     }
     

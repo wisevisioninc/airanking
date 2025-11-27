@@ -32,6 +32,7 @@ BACKUP_DIR="/var/www/backups/airankingx.com/$(date '+%Y%m%d_%H%M%S')"
 SERVER_USER="www-data"
 SERVER_GROUP="www-data"
 PYTHON_SERVICE="airanking"
+CODEBASE_DIR="/home/jerry/codebase/airanking/"
 
 # 解析命令行参数
 if [ $# -ge 1 ]; then
@@ -107,6 +108,42 @@ chown -R www-data:www-data "$DEST_DIR"
 chmod -R 755 "$DEST_DIR"
 # 确保CSV文件可写
 find "$DEST_DIR" -name "*.csv" -exec chmod 664 {} \;
+
+# 确保 CODEBASE_DIR 对 www-data 可写（airankingx.py 需要回写 CSV）
+if [ -d "$CODEBASE_DIR" ]; then
+    log "设置 CODEBASE_DIR 权限以允许 www-data 写入..."
+    
+    # 确保 www-data 是 jerry 组的成员
+    if ! groups www-data | grep -q '\bjerry\b'; then
+        log "将 www-data 添加到 jerry 组..."
+        usermod -a -G jerry www-data
+        log "www-data 已加入 jerry 组（需要重启服务生效）"
+    else
+        log "www-data 已在 jerry 组中"
+    fi
+    
+    # 确保父目录链对 www-data 可访问（需要读和执行权限）
+    chmod o+rx /home/jerry 2>/dev/null || true
+    chmod o+rx /home/jerry/codebase 2>/dev/null || true
+    
+    # 设置 CODEBASE_DIR 本身的权限（jerry 用户和组，www-data 通过组成员访问）
+    chown -R jerry:jerry "$CODEBASE_DIR"
+    chmod -R 775 "$CODEBASE_DIR"
+    # 确保 CSV 文件可写
+    find "$CODEBASE_DIR" -name "*.csv" -exec chmod 664 {} \;
+    
+    # 验证权限设置
+    log "验证 CODEBASE_DIR 权限..."
+    ls -ld "$CODEBASE_DIR" >> /dev/null
+    if [ $? -eq 0 ]; then
+        log "CODEBASE_DIR 权限设置完成"
+    else
+        warning "CODEBASE_DIR 权限验证失败"
+    fi
+else
+    warning "CODEBASE_DIR 不存在: $CODEBASE_DIR，跳过权限设置"
+fi
+
 log "权限设置完成"
 
 # 3.5 重启/验证 Python 服务（airanking）
