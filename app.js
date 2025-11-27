@@ -361,8 +361,13 @@ function validateGameData() {
     
     // Sum of chips should be zero (winners win what losers lose)
     if (chipsSum !== 0) {
-        showValidationError(`chips 总和需为0. 当前总和: ${chipsSum}`);
+        showValidationError(`Chips总和需为0. 当前总和: ${chipsSum}`);
         return;
+    } else {
+        // Show success message when chips sum is 0
+        validationResult.classList.remove("hidden", "validation-error");
+        validationResult.classList.add("validation-success");
+        validationMessage.textContent = `检验通过，当前Chips总和为0!`;
     }
     
     // Calculate total win chips (sum of all positive chips)
@@ -798,10 +803,10 @@ async function updateLeaderboardWithNewData() {
             currentGameData.players.forEach(player => {
                 newRecords.push({
                     Time: currentGameData.date,
-                    ServiceFee_Rate: currentGameData.serviceFee,
+                    ServiceFee_Rate: currentGameData.serviceFee.toFixed(2),
                     Player: player.playerName,
                     Chips: player.chips,
-                    WinOrLose: player.winOrLose === "Win" ? "Win" : "Lose",
+                    WinOrLose: player.winOrLose,
                     Value: player.chips,
                     FinalChips: player.finalChips.toFixed(2)
                 });
@@ -838,8 +843,9 @@ async function updateLeaderboardWithNewData() {
                     // Update UI to reflect new data
                     updateLeaderboard();
                     
-                    // Show success message
-                    alert("LeaderBoard has been successfully updated on the server!");
+                    // Show success message with date
+                    const updateDate = currentGameData.date;
+                    alert(`榜单已经更新 ${updateDate}!`);
                     
                     // Disable the update button to prevent multiple updates
                     updateLeaderboardButton.disabled = true;
