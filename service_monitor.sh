@@ -42,13 +42,59 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# 确保使用airankingx.py文件
+# 确保使用airankingx.py文件和相关权限
 ensure_python_files() {
-  log "检查Python文件..." "INFO"
+  log "检查Python文件和权限..." "INFO"
 
   # 确保Python文件有正确的权限
-  chmod 755 "${TARGET_DIR}"/*.py
-  chown "${SERVER_USER}:${SERVER_GROUP}" "${TARGET_DIR}"/*.py
+  chmod 755 "${TARGET_DIR}"/*.py 2>/dev/null || true
+  chown "${SERVER_USER}:${SERVER_GROUP}" "${TARGET_DIR}"/*.py 2>/dev/null || true
+  
+  # 确保CSV文件可写（包括备份文件和临时文件）
+  find "${TARGET_DIR}" -name "*.csv" -exec chmod 664 {} \; 2>/dev/null || true
+  find "${TARGET_DIR}" -name "*.csv.bak" -exec chmod 664 {} \; 2>/dev/null || true
+  find "${TARGET_DIR}" -name "*.csv.tmp" -exec chmod 664 {} \; 2>/dev/null || true
+  find "${TARGET_DIR}" -name "*.csv" -exec chown ${SERVER_USER}:${SERVER_GROUP} {} \; 2>/dev/null || true
+  find "${TARGET_DIR}" -name "*.csv.bak" -exec chown ${SERVER_USER}:${SERVER_GROUP} {} \; 2>/dev/null || true
+  
+  # 确保日志目录存在且可写
+  mkdir -p "${TARGET_DIR}/logs" 2>/dev/null || true
+  chown -R ${SERVER_USER}:${SERVER_GROUP} "${TARGET_DIR}/logs" 2>/dev/null || true
+  chmod 775 "${TARGET_DIR}/logs" 2>/dev/null || true
+  
+  # 确保所有日志文件有正确权限
+  find "${TARGET_DIR}" -name "*.log" -exec chmod 664 {} \; 2>/dev/null || true
+  find "${TARGET_DIR}" -name "*.log" -exec chown ${SERVER_USER}:${SERVER_GROUP} {} \; 2>/dev/null || true
+  
+  # 确保 CODEBASE_DIR 权限正确（关键！）
+  CODEBASE_DIR="/home/jerry/codebase/airanking/"
+  if [ -d "$CODEBASE_DIR" ]; then
+    log "检查 CODEBASE_DIR 权限..." "INFO"
+    
+    # 确保 www-data 在 jerry 组中
+    if ! groups www-data | grep -q '\bjerry\b'; then
+      log "www-data 不在 jerry 组，尝试添加..." "WARNING"
+      usermod -a -G jerry www-data 2>/dev/null || true
+    fi
+    
+    # 确保父目录可访问
+    chmod o+rx /home/jerry 2>/dev/null || true
+    chmod o+rx /home/jerry/codebase 2>/dev/null || true
+    
+    # 设置 CODEBASE_DIR 权限
+    chown -R jerry:jerry "$CODEBASE_DIR" 2>/dev/null || true
+    chmod -R 775 "$CODEBASE_DIR" 2>/dev/null || true
+    # 确保所有CSV相关文件可写
+    find "$CODEBASE_DIR" -name "*.csv" -exec chmod 664 {} \; 2>/dev/null || true
+    find "$CODEBASE_DIR" -name "*.csv.bak" -exec chmod 664 {} \; 2>/dev/null || true
+    find "$CODEBASE_DIR" -name "*.csv.tmp" -exec chmod 664 {} \; 2>/dev/null || true
+    # 确保日志文件可写
+    find "$CODEBASE_DIR" -name "*.log" -exec chmod 664 {} \; 2>/dev/null || true
+    
+    log "CODEBASE_DIR 权限检查完成" "INFO"
+  else
+    log "CODEBASE_DIR 不存在: $CODEBASE_DIR" "WARNING"
+  fi
   
   return 0
 }
@@ -163,8 +209,31 @@ fix_service() {
   fi
 }
 
+# 清理旧日志文件
+cleanup_old_logs() {
+  log "清理旧日志文件..." "INFO"
+  
+  # 清理7天前的监控日志
+  find "${LOG_DIR}" -name "monitor_*.log" -mtime +7 -delete 2>/dev/null || true
+  
+  # 如果 server.log 过大（超过100MB），截断保留最后10000行
+  if [ -f "${TARGET_DIR}/server.log" ]; then
+    LOG_SIZE=$(stat -f%z "${TARGET_DIR}/server.log" 2>/dev/null || stat -c%s "${TARGET_DIR}/server.log" 2>/dev/null || echo 0)
+    if [ "$LOG_SIZE" -gt 104857600 ]; then
+      log "server.log 过大 (${LOG_SIZE} bytes)，正在截断..." "INFO"
+      tail -n 10000 "${TARGET_DIR}/server.log" > "${TARGET_DIR}/server.log.tmp"
+      mv "${TARGET_DIR}/server.log.tmp" "${TARGET_DIR}/server.log"
+      chown ${SERVER_USER}:${SERVER_GROUP} "${TARGET_DIR}/server.log"
+      chmod 664 "${TARGET_DIR}/server.log"
+    fi
+  fi
+}
+
 # 主函数
 log "服务监控开始执行" "INFO"
+
+# 清理旧日志
+cleanup_old_logs
 
 # 检查Python服务
 if ! check_python_service; then

@@ -7,6 +7,7 @@ import os
 import socket
 import logging
 import re
+import shutil
 from urllib.parse import parse_qs, urlparse
 
 PORT = 8888
@@ -234,23 +235,60 @@ class CustomHandler(SimpleHTTPRequestHandler):
             return
             
         file_path = self.get_file_path(filename)
+        backup_path = f"{file_path}.bak"
+        
         try:
             fieldnames = data[0].keys()
             
             # Create backup of existing file
             if os.path.exists(file_path):
-                backup_path = f"{file_path}.bak"
-                os.rename(file_path, backup_path)
-                logging.info(f"Created backup of {filename} at {backup_path}")
+                try:
+                    # Use shutil.copy2 to preserve permissions and metadata
+                    import shutil
+                    shutil.copy2(file_path, backup_path)
+                    logging.info(f"Created backup of {filename} at {backup_path}")
+                    
+                    # Ensure backup has correct permissions
+                    os.chmod(backup_path, 0o664)
+                except (IOError, OSError, PermissionError) as e:
+                    logging.error(f"Failed to create backup for {filename}: {str(e)}")
+                    # Continue anyway - backup failure shouldn't stop the write
             
-            with open(file_path, 'w', newline='', encoding='utf-8') as file:
-                writer = csv.DictWriter(file, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(data)
+            # Write to a temporary file first
+            temp_path = f"{file_path}.tmp"
+            try:
+                with open(temp_path, 'w', newline='', encoding='utf-8') as file:
+                    writer = csv.DictWriter(file, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(data)
                 
-            logging.info(f"Successfully wrote {len(data)} records to {filename}")
+                # Set correct permissions before moving
+                os.chmod(temp_path, 0o664)
+                
+                # Atomically replace the original file
+                os.replace(temp_path, file_path)
+                
+                # Ensure final file has correct permissions
+                os.chmod(file_path, 0o664)
+                
+                logging.info(f"Successfully wrote {len(data)} records to {filename}")
+            except (IOError, OSError, PermissionError) as e:
+                logging.error(f"Error writing to CSV file {filename}: {str(e)}")
+                # Clean up temp file if it exists
+                if os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except:
+                        pass
+                raise
+                
+        except PermissionError as e:
+            logging.error(f"Permission denied writing to {filename}: {str(e)}")
+            logging.error(f"File path: {file_path}")
+            logging.error(f"Current process user: {os.getuid()}")
+            raise
         except Exception as e:
-            logging.error(f"Error writing to CSV file {filename}: {str(e)}")
+            logging.error(f"Unexpected error writing to CSV file {filename}: {str(e)}")
             raise
     
     def get_file_path(self, filename):
@@ -313,9 +351,9 @@ class CustomHandler(SimpleHTTPRequestHandler):
             if not player_name:
                 continue
             try:
-                chips = float(record.get('Chips', 0) or 0)
+                chips = float(record.get('FinalChips', 0) or 0)
             except (ValueError, TypeError):
-                logging.warning(f"Invalid Chips value for player {player_name}: {record.get('Chips')}")
+                logging.warning(f"Invalid FinalChips value for player {player_name}: {record.get('Chips')}")
                 chips = 0
 
             if player_name not in stats_map:

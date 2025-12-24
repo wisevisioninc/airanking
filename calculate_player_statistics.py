@@ -146,24 +146,60 @@ def write_csv_file(filename, data):
         return
         
     file_path = get_file_path(filename)
+    backup_path = f"{file_path}.bak"
+    temp_path = f"{file_path}.tmp"
+    
     try:
         # Ensure directory exists
         dir_name = os.path.dirname(file_path)
         if dir_name and not os.path.exists(dir_name):
-            os.makedirs(dir_name, exist_ok=True)
+            os.makedirs(dir_name, mode=0o775, exist_ok=True)
 
         # Create backup of existing file
         if os.path.exists(file_path):
-            backup_path = f"{file_path}.bak"
-            os.rename(file_path, backup_path)
-            logging.info(f"Created backup of {filename} at {backup_path}")
+            try:
+                import shutil
+                shutil.copy2(file_path, backup_path)
+                logging.info(f"Created backup of {filename} at {backup_path}")
+                
+                # Ensure backup has correct permissions
+                os.chmod(backup_path, 0o664)
+            except (IOError, OSError, PermissionError) as e:
+                logging.error(f"Failed to create backup for {filename}: {str(e)}")
+                # Continue anyway - backup failure shouldn't stop the write
 
-        # Use pandas to write
-        df = pd.DataFrame(data)
-        df.to_csv(file_path, index=False)
-        logging.info(f"Successfully wrote {len(data)} records to {filename}")
+        # Write to a temporary file first
+        try:
+            df = pd.DataFrame(data)
+            df.to_csv(temp_path, index=False)
+            
+            # Set correct permissions before moving
+            os.chmod(temp_path, 0o664)
+            
+            # Atomically replace the original file
+            os.replace(temp_path, file_path)
+            
+            # Ensure final file has correct permissions
+            os.chmod(file_path, 0o664)
+            
+            logging.info(f"Successfully wrote {len(data)} records to {filename}")
+        except (IOError, OSError, PermissionError) as e:
+            logging.error(f"Error writing to CSV file {filename}: {str(e)}")
+            # Clean up temp file if it exists
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+            raise
+            
+    except PermissionError as e:
+        logging.error(f"Permission denied writing to {filename}: {str(e)}")
+        logging.error(f"File path: {file_path}")
+        logging.error(f"Current process user: {os.getuid()}")
+        raise
     except Exception as e:
-        logging.error(f"Error writing to CSV file {filename}: {str(e)}")
+        logging.error(f"Unexpected error writing to CSV file {filename}: {str(e)}")
         raise
 
 def get_file_path(filename):

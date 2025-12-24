@@ -106,8 +106,11 @@ log "指定代码文件同步完成"
 log "设置文件权限..."
 chown -R www-data:www-data "$DEST_DIR"
 chmod -R 755 "$DEST_DIR"
-# 确保CSV文件可写
+# 确保CSV文件可写（包括备份文件）
 find "$DEST_DIR" -name "*.csv" -exec chmod 664 {} \;
+find "$DEST_DIR" -name "*.csv.bak" -exec chmod 664 {} \; 2>/dev/null || true
+# 确保日志文件可写
+find "$DEST_DIR" -name "*.log" -exec chmod 664 {} \; 2>/dev/null || true
 
 # 确保 CODEBASE_DIR 对 www-data 可写（airankingx.py 需要回写 CSV）
 if [ -d "$CODEBASE_DIR" ]; then
@@ -129,8 +132,12 @@ if [ -d "$CODEBASE_DIR" ]; then
     # 设置 CODEBASE_DIR 本身的权限（jerry 用户和组，www-data 通过组成员访问）
     chown -R jerry:jerry "$CODEBASE_DIR"
     chmod -R 775 "$CODEBASE_DIR"
-    # 确保 CSV 文件可写
+    # 确保 CSV 文件可写（包括备份文件）
     find "$CODEBASE_DIR" -name "*.csv" -exec chmod 664 {} \;
+    find "$CODEBASE_DIR" -name "*.csv.bak" -exec chmod 664 {} \; 2>/dev/null || true
+    find "$CODEBASE_DIR" -name "*.csv.tmp" -exec chmod 664 {} \; 2>/dev/null || true
+    # 确保日志文件可写
+    find "$CODEBASE_DIR" -name "*.log" -exec chmod 664 {} \; 2>/dev/null || true
     
     # 验证权限设置
     log "验证 CODEBASE_DIR 权限..."
