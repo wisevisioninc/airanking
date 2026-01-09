@@ -88,22 +88,30 @@ class CustomHandler(SimpleHTTPRequestHandler):
 
         # Provide leaderboard data from player_statistics.csv
         if self.path.startswith('/leaderboard'):
+            client_ip = self.address_string()
+            logging.info(f"📊 GET /leaderboard request from {client_ip}")
             try:
                 stats = self.read_csv_file('player_statistics.csv')
+                logging.info(f"   → Loaded {len(stats)} player statistics")
+                
                 # Determine last update date from Date column (max string YYYY-MM-DD)
                 dates = [str(row.get('Date')).strip() for row in stats if row.get('Date')]
                 last_update = max(dates) if dates else None
+                logging.info(f"   → Last update date: {last_update}")
+                
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
-                self.wfile.write(json.dumps({
+                response_data = {
                     'success': True,
                     'lastUpdate': last_update,
                     'playerStats': stats
-                }).encode('utf-8'))
+                }
+                self.wfile.write(json.dumps(response_data).encode('utf-8'))
+                logging.info(f"✓ Leaderboard data sent successfully to {client_ip}")
                 return
             except Exception as e:
-                logging.error(f"Failed to load leaderboard: {str(e)}")
+                logging.error(f"❌ Failed to load leaderboard: {str(e)}")
                 self.send_error_response(500, f"Failed to load leaderboard: {str(e)}")
                 return
         
@@ -115,24 +123,44 @@ class CustomHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         # Handle /update_leaderboard endpoint
         if self.path == '/update_leaderboard':
-            logging.info(f"Received POST request to {self.path}")
+            client_ip = self.address_string()
+            logging.info("=" * 80)
+            logging.info(f"📥 RECEIVED POST REQUEST to {self.path} from {client_ip}")
+            logging.info("=" * 80)
+            
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
             
             try:
+                # Parse incoming JSON data
+                logging.info("🔍 Step 1: Parsing JSON data...")
                 data = json.loads(post_data.decode('utf-8'))
+                logging.info("✓ JSON data parsed successfully")
                 
-                # Process the incoming data
-                logging.info("Processing new game records...")
                 # Get new records from request
                 new_records = data.get('newRecords', [])
-                logging.info(f"Received {len(new_records)} new records")
+                logging.info(f"📊 Step 2: Received {len(new_records)} new game records")
+                
+                # Log details of new records
+                if new_records:
+                    dates_in_request = set()
+                    players_in_request = set()
+                    for record in new_records:
+                        if record.get('Time'):
+                            dates_in_request.add(record['Time'])
+                        if record.get('Player'):
+                            players_in_request.add(record['Player'])
+                    logging.info(f"   - Game dates: {sorted(dates_in_request)}")
+                    logging.info(f"   - Players involved: {sorted(players_in_request)}")
+                    logging.info(f"   - Total records to add: {len(new_records)}")
                 
                 # Read existing game records
+                logging.info("📖 Step 3: Reading existing game records...")
                 game_records = self.read_csv_file('team_building_record.csv')
-                logging.info(f"Read {len(game_records)} existing records")
+                logging.info(f"✓ Successfully read {len(game_records)} existing records from database")
 
                 # Extract dates (YYYY-MM-DD) from new_records and existing records
+                logging.info("🔍 Step 4: Validating data - checking for duplicate dates...")
                 def extract_date_str(t):
                     s = str(t or '').strip()
                     return s if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s) else None
@@ -143,7 +171,9 @@ class CustomHandler(SimpleHTTPRequestHandler):
                 # If any date already exists, do not update
                 duplicate_dates = sorted(list(new_dates & existing_dates))
                 if duplicate_dates:
-                    logging.info(f"Duplicate date(s) detected, skipping update: {duplicate_dates}")
+                    logging.warning(f"⚠️ VALIDATION FAILED: Duplicate date(s) detected: {duplicate_dates}")
+                    logging.info("❌ Update operation REJECTED - duplicate dates found")
+                    logging.info("=" * 80)
                     self.send_response(200)
                     self.send_header('Content-type', 'application/json')
                     self.end_headers()
@@ -154,26 +184,59 @@ class CustomHandler(SimpleHTTPRequestHandler):
                     }).encode('utf-8'))
                     return
                 
-                # Add new records
-                game_records.extend(new_records)
+                logging.info("✓ Validation passed - no duplicate dates found")
                 
-                # Save updated game records
+                # Add new records
+                logging.info("➕ Step 5: Merging new records with existing data...")
+                original_count = len(game_records)
+                game_records.extend(new_records)
+                new_count = len(game_records)
+                logging.info(f"✓ Successfully merged: {original_count} + {len(new_records)} = {new_count} total records")
+                
+                # Save updated game records to production
+                logging.info("💾 Step 6: Saving game records to production database...")
                 self.write_csv_file('team_building_record.csv', game_records)
-                logging.info("Saved updated game records")
-                self.write_csv_file(os.path.join(CODEBASE_PATH, 'team_building_record.csv'), game_records)
-                logging.info("Saved updated game records to codebase")
+                logging.info("✓ Successfully saved game records to /var/www/airankingx.com/team_building_record.csv")
+                
+                # Try to save to codebase (may fail due to permissions, but don't stop the process)
+                logging.info("💾 Step 7: Syncing game records to codebase...")
+                try:
+                    codebase_path = os.path.join(CODEBASE_PATH, 'team_building_record.csv')
+                    self.write_csv_file(codebase_path, game_records)
+                    logging.info(f"✓ Successfully synced game records to {codebase_path}")
+                except Exception as e:
+                    logging.warning(f"⚠️ Failed to sync to codebase (non-critical): {str(e)}")
+                    logging.warning("   → You can manually sync later using: sudo sync_csv_back.sh")
                 
                 # Calculate player statistics
+                logging.info("🧮 Step 8: Calculating player statistics...")
                 player_stats = self.calculate_player_statistics(game_records)
-                logging.info(f"Calculated statistics for {len(player_stats)} players")
+                logging.info(f"✓ Successfully calculated statistics for {len(player_stats)} players")
                 
-                # Save updated player statistics
+                # Log top 3 players
+                if len(player_stats) > 0:
+                    top_3 = sorted(player_stats, key=lambda x: x.get('Ranking', 999))[:3]
+                    logging.info("   📊 Top 3 players:")
+                    for player in top_3:
+                        logging.info(f"      #{player['Ranking']} {player['Player']}: {player['WinChips']} chips")
+                
+                # Save updated player statistics to production
+                logging.info("💾 Step 9: Saving player statistics to production database...")
                 self.write_csv_file('player_statistics.csv', player_stats)
-                logging.info("Saved updated player statistics")
-                self.write_csv_file(os.path.join(CODEBASE_PATH, 'player_statistics.csv'), player_stats)
-                logging.info("Saved updated player statistics to codebase")
+                logging.info("✓ Successfully saved player statistics to /var/www/airankingx.com/player_statistics.csv")
+                
+                # Try to save to codebase (may fail due to permissions, but don't stop the process)
+                logging.info("💾 Step 10: Syncing player statistics to codebase...")
+                try:
+                    codebase_path = os.path.join(CODEBASE_PATH, 'player_statistics.csv')
+                    self.write_csv_file(codebase_path, player_stats)
+                    logging.info(f"✓ Successfully synced player statistics to {codebase_path}")
+                except Exception as e:
+                    logging.warning(f"⚠️ Failed to sync player stats to codebase (non-critical): {str(e)}")
+                    logging.warning("   → You can manually sync later using: sudo sync_csv_back.sh")
 
                 # Send success response with updated data
+                logging.info("📤 Step 11: Preparing success response...")
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
@@ -184,16 +247,36 @@ class CustomHandler(SimpleHTTPRequestHandler):
                     'playerStats': player_stats
                 }
                 
-                logging.info("Sending success response")
+                response_size = len(json.dumps(response))
+                logging.info(f"✓ Response prepared (size: {response_size} bytes)")
+                logging.info("📤 Sending success response to client...")
                 self.wfile.write(json.dumps(response).encode('utf-8'))
                 
+                logging.info("=" * 80)
+                logging.info("🎉 UPDATE LEADERBOARD SUCCESS!")
+                logging.info(f"   - Added {len(new_records)} new game records")
+                logging.info(f"   - Updated {len(player_stats)} player statistics")
+                logging.info(f"   - Client: {client_ip}")
+                logging.info("=" * 80)
+                
             except json.JSONDecodeError as e:
-                logging.error(f"Invalid JSON data: {str(e)}")
+                logging.error("=" * 80)
+                logging.error(f"❌ JSON PARSE ERROR: {str(e)}")
+                logging.error(f"   - Client: {client_ip}")
+                logging.error(f"   - Raw data length: {len(post_data)} bytes")
+                logging.error("=" * 80)
                 self.send_error_response(400, f"Invalid JSON data: {str(e)}")
                 
             except Exception as e:
                 # Send error response
-                logging.error(f"Error processing request: {str(e)}")
+                logging.error("=" * 80)
+                logging.error(f"❌ SERVER ERROR during update_leaderboard")
+                logging.error(f"   - Error type: {type(e).__name__}")
+                logging.error(f"   - Error message: {str(e)}")
+                logging.error(f"   - Client: {client_ip}")
+                import traceback
+                logging.error(f"   - Traceback:\n{traceback.format_exc()}")
+                logging.error("=" * 80)
                 self.send_error_response(500, str(e))
         else:
             # Handle other POST requests (404 Not Found)
@@ -231,11 +314,13 @@ class CustomHandler(SimpleHTTPRequestHandler):
     def write_csv_file(self, filename, data):
         """Write list of dictionaries to CSV file"""
         if not data:
-            logging.warning(f"No data to write to {filename}")
+            logging.warning(f"⚠️ No data to write to {filename}")
             return
             
         file_path = self.get_file_path(filename)
         backup_path = f"{file_path}.bak"
+        
+        logging.debug(f"   → Writing {len(data)} records to {file_path}")
         
         try:
             fieldnames = data[0].keys()
@@ -245,13 +330,14 @@ class CustomHandler(SimpleHTTPRequestHandler):
                 try:
                     # Use shutil.copy2 to preserve permissions and metadata
                     import shutil
+                    original_size = os.path.getsize(file_path)
                     shutil.copy2(file_path, backup_path)
-                    logging.info(f"Created backup of {filename} at {backup_path}")
+                    logging.debug(f"   → Created backup: {backup_path} ({original_size} bytes)")
                     
                     # Ensure backup has correct permissions
                     os.chmod(backup_path, 0o664)
                 except (IOError, OSError, PermissionError) as e:
-                    logging.error(f"Failed to create backup for {filename}: {str(e)}")
+                    logging.warning(f"⚠️ Failed to create backup for {filename}: {str(e)}")
                     # Continue anyway - backup failure shouldn't stop the write
             
             # Write to a temporary file first
@@ -271,9 +357,15 @@ class CustomHandler(SimpleHTTPRequestHandler):
                 # Ensure final file has correct permissions
                 os.chmod(file_path, 0o664)
                 
-                logging.info(f"Successfully wrote {len(data)} records to {filename}")
+                # Get file stats
+                final_size = os.path.getsize(file_path)
+                file_owner = os.stat(file_path)
+                logging.debug(f"   → File written successfully: {final_size} bytes, owner: {file_owner.st_uid}:{file_owner.st_gid}")
+                
             except (IOError, OSError, PermissionError) as e:
-                logging.error(f"Error writing to CSV file {filename}: {str(e)}")
+                logging.error(f"❌ Error writing to CSV file {filename}: {str(e)}")
+                logging.error(f"   → File path: {file_path}")
+                logging.error(f"   → Process UID: {os.getuid()}, GID: {os.getgid()}")
                 # Clean up temp file if it exists
                 if os.path.exists(temp_path):
                     try:
@@ -283,12 +375,15 @@ class CustomHandler(SimpleHTTPRequestHandler):
                 raise
                 
         except PermissionError as e:
-            logging.error(f"Permission denied writing to {filename}: {str(e)}")
-            logging.error(f"File path: {file_path}")
-            logging.error(f"Current process user: {os.getuid()}")
+            logging.error(f"❌ Permission denied writing to {filename}: {str(e)}")
+            logging.error(f"   → File path: {file_path}")
+            logging.error(f"   → Current process UID: {os.getuid()}, GID: {os.getgid()}")
+            if os.path.exists(file_path):
+                stat_info = os.stat(file_path)
+                logging.error(f"   → File owner: {stat_info.st_uid}:{stat_info.st_gid}, permissions: {oct(stat_info.st_mode)}")
             raise
         except Exception as e:
-            logging.error(f"Unexpected error writing to CSV file {filename}: {str(e)}")
+            logging.error(f"❌ Unexpected error writing to CSV file {filename}: {str(e)}")
             raise
     
     def get_file_path(self, filename):
@@ -417,20 +512,62 @@ def run(server_class=HTTPServer, handler_class=CustomHandler, port=PORT):
     
     ip_address = get_ip_address()
     
-    logging.info(f"Starting server on {ip_address}:{port}")
-    print(f"Starting server on {ip_address}:{port}")
-    print(f"Server logs will be written to {LOG_FILE}")
-    print(f"Press Ctrl+C to stop the server")
+    # Log startup information
+    logging.info("=" * 80)
+    logging.info("🚀 AIRANKINGX SERVER STARTING")
+    logging.info("=" * 80)
+    logging.info(f"Server IP: {ip_address}")
+    logging.info(f"Server Port: {port}")
+    logging.info(f"Process UID: {os.getuid()}, GID: {os.getgid()}")
+    logging.info(f"Working Directory: {os.getcwd()}")
+    logging.info(f"Codebase Path: {CODEBASE_PATH}")
+    logging.info(f"Log File: {os.path.abspath(LOG_FILE)}")
+    
+    # Check file permissions
+    csv_files = ['team_building_record.csv', 'player_statistics.csv', 'player_statistics_251029.csv']
+    logging.info("Checking CSV files:")
+    for csv_file in csv_files:
+        file_path = os.path.join(os.getcwd(), csv_file)
+        if os.path.exists(file_path):
+            stat_info = os.stat(file_path)
+            size = os.path.getsize(file_path)
+            logging.info(f"   ✓ {csv_file}: {size} bytes, owner: {stat_info.st_uid}:{stat_info.st_gid}, perms: {oct(stat_info.st_mode)}")
+        else:
+            logging.warning(f"   ⚠️ {csv_file}: NOT FOUND")
+    
+    # Check codebase directory access
+    if os.path.exists(CODEBASE_PATH):
+        logging.info(f"Codebase directory accessible: {CODEBASE_PATH}")
+        if os.access(CODEBASE_PATH, os.W_OK):
+            logging.info("   ✓ Codebase directory is WRITABLE")
+        else:
+            logging.warning("   ⚠️ Codebase directory is NOT writable (sync will fail)")
+    else:
+        logging.warning(f"   ⚠️ Codebase directory NOT FOUND: {CODEBASE_PATH}")
+    
+    logging.info("=" * 80)
+    logging.info("✓ Server ready to accept connections")
+    logging.info("=" * 80)
+    
+    print(f"🚀 AIRankingX Server Started")
+    print(f"   Server: {ip_address}:{port}")
+    print(f"   Logs: {LOG_FILE}")
+    print(f"   Press Ctrl+C to stop")
+    print("")
     
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        logging.info("Server shutdown initiated by user")
-        print("\nShutting down server")
+        logging.info("=" * 80)
+        logging.info("🛑 Server shutdown initiated by user")
+        logging.info("=" * 80)
+        print("\n🛑 Shutting down server...")
         httpd.server_close()
     except Exception as e:
-        logging.error(f"Server error: {str(e)}")
-        print(f"Server error: {str(e)}")
+        logging.error("=" * 80)
+        logging.error(f"❌ Server error: {str(e)}")
+        logging.error("=" * 80)
+        print(f"❌ Server error: {str(e)}")
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:

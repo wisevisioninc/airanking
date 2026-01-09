@@ -102,8 +102,22 @@ ensure_python_files() {
 # 检查Python服务状态
 check_python_service() {
   log "检查Python服务状态..." "INFO"
+  
+  # 检查服务是否运行
   if ! systemctl is-active --quiet ${PYTHON_SERVICE}; then
     log "Python服务不在运行状态，尝试重启..." "WARNING"
+    
+    # 确保 www-data 在 jerry 组中
+    if ! groups www-data | grep -q '\bjerry\b'; then
+      log "www-data 不在 jerry 组，添加中..." "WARNING"
+      usermod -a -G jerry www-data
+      log "已将 www-data 添加到 jerry 组" "INFO"
+    fi
+    
+    # 重新加载 systemd 配置
+    systemctl daemon-reload
+    
+    # 重启服务
     systemctl restart ${PYTHON_SERVICE}
     sleep 5
     
@@ -117,7 +131,7 @@ check_python_service() {
       # 确保文件名正确
       ensure_python_files
       
-      # 重新加载systemd并再次尝试重启
+      # 再次尝试重启
       systemctl daemon-reload
       systemctl restart ${PYTHON_SERVICE}
       sleep 5
@@ -128,15 +142,74 @@ check_python_service() {
         return 1
       else
         log "Python服务成功重启" "INFO"
+        verify_service_permissions
       fi
     else
       log "Python服务成功重启" "INFO"
+      verify_service_permissions
     fi
   else
     log "Python服务运行正常" "INFO"
+    # 即使服务运行，也验证权限
+    verify_service_permissions
   fi
   
   return 0
+}
+
+# 验证服务权限
+verify_service_permissions() {
+  log "验证Python服务权限..." "INFO"
+  
+  # 获取进程PID
+  PID=$(systemctl show -p MainPID ${PYTHON_SERVICE} | cut -d= -f2)
+  
+  if [ "$PID" = "0" ] || [ -z "$PID" ]; then
+    log "无法获取Python服务PID" "WARNING"
+    return 1
+  fi
+  
+  # 检查进程的组成员
+  if [ -f "/proc/$PID/status" ]; then
+    GROUPS=$(cat /proc/$PID/status | grep "^Groups:" | awk '{print $2, $3}')
+    log "进程 PID $PID 的组: $GROUPS" "INFO"
+    
+    # 检查是否包含 jerry 组 (GID 1000)
+    if echo "$GROUPS" | grep -q "1000"; then
+      log "✓ 进程已加入 jerry 组，可以写入代码库" "INFO"
+      return 0
+    else
+      log "⚠️ 进程未加入 jerry 组，无法写入代码库！需要重启服务" "WARNING"
+      
+      # 确保 www-data 在 jerry 组中
+      if ! groups www-data | grep -q '\bjerry\b'; then
+        log "添加 www-data 到 jerry 组..." "INFO"
+        usermod -a -G jerry www-data
+      fi
+      
+      # 重启服务以获得新的组权限
+      log "重启服务以刷新组权限..." "INFO"
+      systemctl daemon-reload
+      systemctl restart ${PYTHON_SERVICE}
+      sleep 5
+      
+      # 再次验证
+      NEW_PID=$(systemctl show -p MainPID ${PYTHON_SERVICE} | cut -d= -f2)
+      if [ -f "/proc/$NEW_PID/status" ]; then
+        NEW_GROUPS=$(cat /proc/$NEW_PID/status | grep "^Groups:" | awk '{print $2, $3}')
+        if echo "$NEW_GROUPS" | grep -q "1000"; then
+          log "✓ 重启后进程已获得 jerry 组权限" "INFO"
+          return 0
+        else
+          log "❌ 重启后进程仍未获得 jerry 组权限" "ERROR"
+          return 1
+        fi
+      fi
+    fi
+  else
+    log "无法读取进程状态文件" "WARNING"
+    return 1
+  fi
 }
 
 # 检查Nginx状态

@@ -77,6 +77,7 @@ log "仅同步固定的代码文件到目标目录..."
 
 FILES_TO_SYNC="
 airankingx.py
+airanking.service
 app.js
 styles.css
 index.html
@@ -153,15 +154,98 @@ fi
 
 log "权限设置完成"
 
-# 3.5 重启/验证 Python 服务（airanking）
+# 3.5 部署 systemd 服务配置文件
+log "部署 systemd 服务配置..."
+
+# 获取脚本所在目录的绝对路径（更可靠的方法）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVICE_FILE="${SCRIPT_DIR}/airanking.service"
+
+log "脚本目录: ${SCRIPT_DIR}"
+log "服务文件路径: ${SERVICE_FILE}"
+
+# 使用绝对路径检查文件
+if [ -f "${SERVICE_FILE}" ]; then
+    log "✓ 找到 airanking.service 文件"
+    log "  文件信息: $(ls -lh "${SERVICE_FILE}")"
+    
+    # 备份现有服务文件
+    if [ -f "/etc/systemd/system/${PYTHON_SERVICE}.service" ]; then
+        BACKUP_FILE="/etc/systemd/system/${PYTHON_SERVICE}.service.bak-$(date +%Y%m%d_%H%M%S)"
+        cp "/etc/systemd/system/${PYTHON_SERVICE}.service" "${BACKUP_FILE}"
+        log "已备份现有服务文件到: ${BACKUP_FILE}"
+    fi
+    
+    # 复制新的服务文件
+    log "正在复制服务文件..."
+    cp -v "${SERVICE_FILE}" "/etc/systemd/system/${PYTHON_SERVICE}.service"
+    if [ $? -eq 0 ]; then
+        chmod 644 "/etc/systemd/system/${PYTHON_SERVICE}.service"
+        log "✓ 成功部署 systemd 服务配置"
+        
+        # 验证部署
+        if grep -q "SupplementaryGroups=jerry" "/etc/systemd/system/${PYTHON_SERVICE}.service"; then
+            log "✓ 验证成功: 配置包含 SupplementaryGroups=jerry"
+        else
+            warning "⚠️ 警告: 配置文件可能不包含 SupplementaryGroups=jerry"
+        fi
+    else
+        error "✗ 复制服务文件失败"
+        exit 1
+    fi
+else
+    error "✗ 未找到服务文件: ${SERVICE_FILE}"
+    log "当前目录: $(pwd)"
+    log "脚本目录: ${SCRIPT_DIR}"
+    log "SOURCE_DIR: ${SOURCE_DIR}"
+    log "尝试列出目录内容:"
+    ls -la "${SCRIPT_DIR}/" | grep -E "airanking|service" || echo "  未找到相关文件"
+    error "无法继续部署 systemd 服务配置"
+    exit 1
+fi
+
+# 3.6 重启/验证 Python 服务（airanking）
 log "检查并重启Python服务(${PYTHON_SERVICE})..."
 if [ ! -f "/etc/systemd/system/${PYTHON_SERVICE}.service" ]; then
     warning "未发现 /etc/systemd/system/${PYTHON_SERVICE}.service，跳过Python服务重启"
 else
+    # 确保 www-data 在 jerry 组中
+    if ! groups www-data | grep -q '\bjerry\b'; then
+        log "将 www-data 添加到 jerry 组..."
+        usermod -a -G jerry www-data
+        log "www-data 已加入 jerry 组"
+    else
+        log "www-data 已在 jerry 组中"
+    fi
+    
+    # 重新加载 systemd 配置
     systemctl daemon-reload
+    log "已重新加载 systemd 配置"
+    
+    # 重启服务
     systemctl restart ${PYTHON_SERVICE}
+    sleep 5
+    
     if systemctl is-active --quiet ${PYTHON_SERVICE}; then
         log "Python服务已成功重启"
+        
+        # 验证进程权限
+        PID=$(systemctl show -p MainPID ${PYTHON_SERVICE} | cut -d= -f2)
+        if [ "$PID" != "0" ] && [ -n "$PID" ]; then
+            if [ -f "/proc/$PID/status" ]; then
+                GROUPS=$(cat /proc/$PID/status | grep "^Groups:" | awk '{print $2, $3}')
+                log "进程 PID $PID 的组: $GROUPS"
+                
+                if echo "$GROUPS" | grep -q "1000"; then
+                    log "✓ 进程已加入 jerry 组 (GID 1000)，可以写入代码库"
+                else
+                    warning "⚠️ 进程未加入 jerry 组，可能无法写入代码库"
+                    log "尝试再次重启服务..."
+                    systemctl restart ${PYTHON_SERVICE}
+                    sleep 5
+                fi
+            fi
+        fi
     else
         warning "Python服务重启失败，尝试手动启动以诊断..."
         (cd "$DEST_DIR" && sudo -u ${SERVER_USER} python3 airankingx.py &)
